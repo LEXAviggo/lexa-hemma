@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Lexa">
+<link rel="manifest" href="manifest.json">
+<title>Lexa</title>
+<style>
+:root{--bg:#f3f0e8;--paper:#fffdf8;--ink:#1f2a2e;--soft:#5d6a6e;--line:#ddd6c6;--grid:#d7e3ec;
+  --accent:#2f6f5e;--accent-ink:#fff;--warn:#a4462f;--talk:#c0573f;
+  --body:"Atkinson Hyperlegible","Verdana",system-ui,sans-serif;font-size:20px}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);-webkit-text-size-adjust:100%}
+body{padding:12px 16px calc(12px + env(safe-area-inset-bottom))}
+.top{display:flex;align-items:center;gap:14px;margin-bottom:10px}
+h1{font-size:1.2em;margin:0;letter-spacing:.02em}
+.talk{flex:0 0 auto;min-width:260px;min-height:72px;border:none;border-radius:40px;background:var(--accent);color:var(--accent-ink);
+  font:inherit;font-weight:700;font-size:1.05em;display:flex;align-items:center;justify-content:center;gap:12px;padding:0 26px;cursor:pointer}
+.talk svg{width:30px;height:30px}
+.talk.on{background:var(--talk)}
+.status{flex:1;min-width:0;font-size:.9em;color:var(--soft)}
+.status b{color:var(--ink)}
+.say{font-size:.95em;line-height:1.4;background:var(--paper);border:2px solid var(--line);border-radius:14px;padding:8px 12px;min-height:2.2em;margin-bottom:10px}
+.desk{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:820px){.desk{grid-template-columns:1fr}.talk{min-width:0;flex:1}}
+.panel{background:var(--paper);border:2px solid var(--line);border-radius:14px;padding:10px;display:flex;flex-direction:column;min-height:0}
+h2{font-size:.8em;margin:0 0 8px;color:var(--soft);font-weight:700}
+.tools{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.tools button,.pages button{font:inherit;font-size:.75em;min-height:44px;border-radius:12px;border:2px solid var(--line);background:var(--paper);color:var(--ink);padding:6px 12px;cursor:pointer}
+.tools button.on,.pages button.on{border-color:var(--accent);box-shadow:inset 0 0 0 2px var(--accent)}
+.dot{display:inline-block;width:20px;height:20px;border-radius:50%;vertical-align:middle}
+.pages{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.book{flex:1;overflow:auto;min-height:60vh;max-height:72vh;border-radius:10px;background:#fff}
+.book img{width:100%;display:block}
+.empty{padding:20px;color:var(--soft);font-size:.8em}
+.sheet{flex:1;min-height:60vh;max-height:72vh;border-radius:10px;overflow:hidden;touch-action:none}
+canvas{width:100%;height:100%;display:block;touch-action:none}
+.add{font-size:.7em;color:var(--soft);margin-top:6px}
+.err{color:var(--warn)}
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>Lexa</h1>
+  <button id="talk" class="talk" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg><span id="talkTxt">Prata med Lexa</span></button>
+  <div id="status" class="status">Tryck på knappen för att börja prata.</div>
+</div>
+<div id="say" class="say" aria-live="polite"></div>
+
+<div class="desk">
+  <section class="panel" aria-label="Boken">
+    <h2>Boken</h2>
+    <div id="pages" class="pages"></div>
+    <div id="book" class="book"><div class="empty">Här kommer sidorna i boken.</div></div>
+    <label class="add">Lägg in boksidor (för vuxen): <input id="addPages" type="file" accept="image/*" multiple></label>
+  </section>
+  <section class="panel" aria-label="Rityta">
+    <h2>Rita och räkna här</h2>
+    <div class="tools">
+      <button id="penBlue" type="button" class="on" aria-label="Blå penna"><span class="dot" style="background:#1b3a8f"></span></button>
+      <button id="penRed" type="button" aria-label="Röd penna"><span class="dot" style="background:#c0392b"></span></button>
+      <button id="penGreen" type="button" aria-label="Grön penna"><span class="dot" style="background:#2e7d4f"></span></button>
+      <button id="eraser" type="button">Sudd</button>
+      <button id="undo" type="button">Ångra</button>
+      <button id="clear" type="button">Rensa</button>
+    </div>
+    <div class="sheet"><canvas id="sheet" aria-label="Rityta med rutor"></canvas></div>
+  </section>
+</div>
+
+<script type="module">
+const AGENT = "agent_2501m70pj3rnebgtyp76jpaha12k";
+const $ = id => document.getElementById(id);
+const statusEl = $("status"), sayEl = $("say"), talk = $("talk"), talkTxt = $("talkTxt");
+const setStatus = (html, bad) => { statusEl.innerHTML = html; statusEl.classList.toggle("err", !!bad); };
+
+/* ---------- boken ---------- */
+let pages = [], current = -1;
+function drawPages(){ const bar=$("pages"); bar.innerHTML="";
+  pages.forEach((p,i)=>{ const b=document.createElement("button"); b.type="button"; b.textContent="Sida "+(i+1); if(i===current) b.className="on";
+    b.onclick=()=>{ current=i; drawPages(); showPage(); tellPage(); }; bar.appendChild(b); }); }
+function showPage(){ const v=$("book"); v.innerHTML=""; if(current<0||!pages[current]){ v.innerHTML='<div class="empty">Här kommer sidorna i boken.</div>'; return; }
+  const img=document.createElement("img"); img.alt="Sida "+(current+1)+" i boken"; img.src=pages[current].src; v.appendChild(img); }
+async function loadPages(){ try{ const r=await fetch("sidor.json"); if(!r.ok) throw 0; const names=await r.json();
+  pages=names.map(n=>({name:n, src:"sidor/"+encodeURIComponent(n)})); }catch(e){ pages=[]; }
+  if(pages.length) current=0; drawPages(); showPage(); }
+$("addPages").onchange=e=>{ for(const f of e.target.files||[]) pages.push({name:f.name, src:URL.createObjectURL(f)}); if(current<0&&pages.length) current=0; drawPages(); showPage(); e.target.value=""; };
+
+/* ---------- ritytan ---------- */
+const cv=$("sheet"), ctx=cv.getContext("2d"); let strokes=[], cur=null, color="#1b3a8f", erasing=false;
+function sizeCanvas(){ const r=cv.getBoundingClientRect(), d=window.devicePixelRatio||1; cv.width=Math.round(r.width*d); cv.height=Math.round(r.height*d); ctx.setTransform(d,0,0,d,0,0); redraw(); }
+function redraw(){ const r=cv.getBoundingClientRect(); ctx.fillStyle="#fffdf8"; ctx.fillRect(0,0,r.width,r.height);
+  ctx.strokeStyle="#d7e3ec"; ctx.lineWidth=1; const g=24;
+  for(let x=g;x<r.width;x+=g){ ctx.beginPath(); ctx.moveTo(x+.5,0); ctx.lineTo(x+.5,r.height); ctx.stroke(); }
+  for(let y=g;y<r.height;y+=g){ ctx.beginPath(); ctx.moveTo(0,y+.5); ctx.lineTo(r.width,y+.5); ctx.stroke(); }
+  for(const s of strokes){ ctx.strokeStyle=s.erase?"#fffdf8":s.color; ctx.lineWidth=s.erase?24:3.5; ctx.lineCap="round"; ctx.lineJoin="round";
+    ctx.beginPath(); s.pts.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1])); ctx.stroke(); } }
+const pos=e=>{ const r=cv.getBoundingClientRect(); return [e.clientX-r.left, e.clientY-r.top]; };
+cv.addEventListener("pointerdown",e=>{ e.preventDefault(); cv.setPointerCapture(e.pointerId); cur={color, erase:erasing, pts:[pos(e)]}; strokes.push(cur); redraw(); });
+cv.addEventListener("pointermove",e=>{ if(!cur) return; e.preventDefault(); cur.pts.push(pos(e)); redraw(); });
+const end=()=>{ cur=null; }; cv.addEventListener("pointerup",end); cv.addEventListener("pointercancel",end);
+function pick(id,c){ ["penBlue","penRed","penGreen","eraser"].forEach(x=>$(x).classList.remove("on")); $(id).classList.add("on"); if(c){color=c;erasing=false;} else erasing=true; }
+$("penBlue").onclick=()=>pick("penBlue","#1b3a8f"); $("penRed").onclick=()=>pick("penRed","#c0392b"); $("penGreen").onclick=()=>pick("penGreen","#2e7d4f"); $("eraser").onclick=()=>pick("eraser",null);
+$("undo").onclick=()=>{ strokes.pop(); redraw(); }; $("clear").onclick=()=>{ strokes=[]; redraw(); };
+window.addEventListener("resize",sizeCanvas); try{ new ResizeObserver(sizeCanvas).observe(cv); }catch(e){}
+sizeCanvas();
+
+/* ---------- samtalet med Lexa (ElevenLabs) ---------- */
+let conv = null, Conversation = null, starting = false;
+function tellPage(){ if(conv && current>=0){ try{ conv.sendContextualUpdate("Barnet har nu sida "+(current+1)+" i boken öppen."); }catch(e){} } }
+function ui(on){ talk.classList.toggle("on", on); talkTxt.textContent = on ? "Sluta prata" : "Prata med Lexa"; }
+async function start(){
+  if(starting) return; starting=true; setStatus("Startar …");
+  try{
+    // Be om mikrofonen först, så att ett nej syns tydligt.
+    const s = await navigator.mediaDevices.getUserMedia({audio:true}); s.getTracks().forEach(t=>t.stop());
+  }catch(e){
+    starting=false; setStatus("<b>Mikrofonen är stängd.</b> Tryck på aA i Safari, sedan Webbplatsinställningar, och sätt Mikrofon till Tillåt.", true); return;
+  }
+  try{
+    if(!Conversation) ({ Conversation } = await import("https://cdn.jsdelivr.net/npm/@elevenlabs/client@1.31.0/+esm"));
+    conv = await Conversation.startSession({
+      agentId: AGENT,
+      onConnect: () => { ui(true); setStatus("<b>Lexa lyssnar.</b> Prata när du vill."); setTimeout(tellPage, 800); },
+      onDisconnect: () => { conv=null; ui(false); setStatus("Samtalet är slut. Tryck på knappen för att prata igen."); },
+      onModeChange: ({mode}) => { if(conv) setStatus(mode==="speaking" ? "<b>Lexa pratar.</b>" : "<b>Lexa lyssnar.</b> Prata när du vill."); },
+      onMessage: (m) => { const who = (m.source||m.role)==="ai"||(m.source||m.role)==="agent" ? "Lexa" : "Du"; const txt = m.message||m.text||"";
+        if(txt) sayEl.innerHTML = "<b>"+who+":</b> "+txt.replace(/[<>&]/g,c=>({"<":"&lt;",">":"&gt;","&":"&amp;"}[c])); },
+      onError: (e) => { setStatus("Något gick fel: "+(e&&e.message||e)+". Tryck och försök igen.", true); },
+    });
+  }catch(e){ conv=null; ui(false); setStatus("Lexa kunde inte starta: "+(e&&e.message||e), true); }
+  starting=false;
+}
+async function stop(){ try{ await conv?.endSession(); }catch(e){} conv=null; ui(false); }
+talk.onclick = () => conv ? stop() : start();
+
+loadPages();
+</script>
+</body>
+</html>
